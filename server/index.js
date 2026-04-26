@@ -23,17 +23,20 @@ class SnapdropServer {
         this._wss.on('headers', (headers, response) => this._onHeaders(headers, response));
 
         this._rooms = {};
+        this._screenRooms = {};
 
         console.log('Snapdrop is running on port', port);
     }
 
     _onConnection(peer) {
-        this._joinRoom(peer);
         peer.socket.on('message', message => this._onMessage(peer, message));
         peer.socket.on('error', console.error);
         this._keepAlive(peer);
 
-        // send displayName
+        if (peer.isScreen) return;
+
+        this._joinRoom(peer);
+
         this._send(peer, {
             type: 'display-name',
             message: {
@@ -50,32 +53,60 @@ class SnapdropServer {
     }
 
     _onMessage(sender, message) {
-        // Try to parse message 
         try {
             message = JSON.parse(message);
         } catch (e) {
-            return; // TODO: handle malformed JSON
+            return;
         }
 
         switch (message.type) {
             case 'disconnect':
                 this._leaveRoom(sender);
-                break;
+                this._leaveScreenRoom(sender);
+                return;
             case 'pong':
                 sender.lastBeat = Date.now();
-                break;
+                return;
+            case 'create-screen':
+                this._createScreenRoom(sender);
+                return;
+            case 'join-screen':
+                this._joinScreenRoom(sender, message.code);
+                return;
+            case 'screen-leave':
+                this._leaveScreenRoom(sender);
+                return;
         }
 
-        // relay message to recipient
-        if (message.to && this._rooms[sender.ip]) {
-            const recipientId = message.to; // TODO: sanitize
-            const recipient = this._rooms[sender.ip][recipientId];
+        var recipient = null;
+        if (message.to) {
+            recipient = this._getRecipient(sender, message.to);
+        }
+
+        if (recipient) {
             delete message.to;
-            // add sender id
             message.sender = sender.id;
             this._send(recipient, message);
             return;
         }
+    }
+
+    _getRecipient(sender, recipientId) {
+        var room, recipient;
+
+        if (sender.screenCode) {
+            room = this._screenRooms[sender.screenCode];
+            if (room) {
+                if (room.screen && room.screen.id === recipientId) return room.screen;
+                if (room.casters[recipientId]) return room.casters[recipientId];
+            }
+        }
+
+        if (this._rooms[sender.ip]) {
+            return this._rooms[sender.ip][recipientId];
+        }
+
+        return null;
     }
 
     _joinRoom(peer) {
@@ -109,18 +140,16 @@ class SnapdropServer {
     }
 
     _leaveRoom(peer) {
+        if (peer.isScreen && !peer.screenCode) return;
         if (!this._rooms[peer.ip] || !this._rooms[peer.ip][peer.id]) return;
         this._cancelKeepAlive(this._rooms[peer.ip][peer.id]);
 
-        // delete the peer
         delete this._rooms[peer.ip][peer.id];
 
         peer.socket.terminate();
-        //if room is empty, delete the room
         if (!Object.keys(this._rooms[peer.ip]).length) {
             delete this._rooms[peer.ip];
         } else {
-            // notify all other peers
             for (const otherPeerId in this._rooms[peer.ip]) {
                 const otherPeer = this._rooms[peer.ip][otherPeerId];
                 this._send(otherPeer, { type: 'peer-left', peerId: peer.id });
@@ -156,6 +185,82 @@ class SnapdropServer {
             clearTimeout(peer.timerId);
         }
     }
+
+    _generateScreenCode() {
+        var code;
+        do {
+            code = Math.floor(100000 + Math.random() * 900000).toString();
+        } while (this._screenRooms[code]);
+        return code;
+    }
+
+    _createScreenRoom(screenPeer) {
+        if (screenPeer.screenCode) {
+            this._leaveScreenRoom(screenPeer);
+        }
+        var code = this._generateScreenCode();
+        this._screenRooms[code] = {
+            screen: screenPeer,
+            casters: {}
+        };
+        screenPeer.screenCode = code;
+        screenPeer.isScreenHost = true;
+        this._send(screenPeer, { type: 'screen-created', code: code });
+        console.log('Screen room created:', code);
+    }
+
+    _joinScreenRoom(casterPeer, code) {
+        if (!code || !this._screenRooms[code]) {
+            this._send(casterPeer, { type: 'screen-error', message: 'Invalid code or screen not available' });
+            return;
+        }
+        var room = this._screenRooms[code];
+        if (!room.screen) {
+            this._send(casterPeer, { type: 'screen-error', message: 'Screen is offline' });
+            return;
+        }
+        if (casterPeer.screenCode) {
+            this._leaveScreenRoom(casterPeer);
+        }
+        room.casters[casterPeer.id] = casterPeer;
+        casterPeer.screenCode = code;
+        this._send(room.screen, {
+            type: 'caster-joined',
+            casterId: casterPeer.id
+        });
+        this._send(casterPeer, {
+            type: 'screen-joined',
+            screenId: room.screen.id
+        });
+        console.log('Caster joined screen room:', code);
+    }
+
+    _leaveScreenRoom(peer) {
+        if (!peer.screenCode) return;
+        var code = peer.screenCode;
+        var room = this._screenRooms[code];
+        if (!room) return peer.screenCode = null;
+
+        if (peer.isScreenHost) {
+            for (var casterId in room.casters) {
+                var caster = room.casters[casterId];
+                this._send(caster, { type: 'screen-left' });
+                caster.screenCode = null;
+            }
+            delete this._screenRooms[code];
+            console.log('Screen room closed:', code);
+        } else {
+            delete room.casters[peer.id];
+            if (room.screen) {
+                this._send(room.screen, { type: 'caster-left', casterId: peer.id });
+            }
+            if (!Object.keys(room.casters).length && !room.screen) {
+                delete this._screenRooms[code];
+            }
+        }
+        peer.screenCode = null;
+        peer.isScreenHost = false;
+    }
 }
 
 
@@ -172,13 +277,14 @@ class Peer {
 
         // set peer id
         this._setPeerId(request)
-        // is WebRTC supported ?
         this.rtcSupported = request.url.indexOf('webrtc') > -1;
-        // set name 
+        this.isScreen = request.url.indexOf('/screen') > -1;
         this._setName(request);
         // for keepalive
         this.timerId = 0;
         this.lastBeat = Date.now();
+        this.screenCode = null;
+        this.isScreenHost = false;
     }
 
     _setIP(request) {

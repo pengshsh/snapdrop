@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "node-forge": "^1.4.0",
     "ua-parser-js": "^0.7.24",
     "unique-names-generator": "^4.3.0",
     "ws": "^7.4.6"

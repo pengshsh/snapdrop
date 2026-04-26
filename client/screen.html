@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Snapdrop - Screen Cast</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta name="color-scheme" content="dark light">
+    <link rel="stylesheet" type="text/css" href="screen.css">
+    <link rel="icon" sizes="96x96" href="images/favicon-96x96.png">
+</head>
+
+<body>
+    <header>
+        <a href="/" class="back-link" title="Back to File Transfer">&larr; File Transfer</a>
+        <button id="modeToggle" class="mode-toggle">Switch to Cast Mode</button>
+    </header>
+
+    <main>
+        <!-- Display Mode (Big Screen) -->
+        <div id="displayMode" class="mode-panel">
+            <h1 class="mode-title">Screen Display</h1>
+            <div id="screenCodeContainer" class="code-container">
+                <p class="code-label">Cast Code</p>
+                <div id="screenCode" class="code">------</div>
+                <p class="code-hint">Open this page on the casting device and enter the code above</p>
+            </div>
+            <div class="video-container">
+                <video id="remoteVideo" autoplay playsinline muted></video>
+            </div>
+            <div id="statusText" class="status-text">Connecting to server...</div>
+        </div>
+
+        <!-- Cast Mode (Client) -->
+        <div id="castMode" class="mode-panel" hidden>
+            <h1 class="mode-title">Cast Your Screen</h1>
+            <div class="cast-form">
+                <label for="codeInput" class="input-label">Enter the 6-digit code shown on the big screen</label>
+                <div class="input-row">
+                    <input type="text" id="codeInput" class="code-input" maxlength="6" placeholder="000000" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
+                </div>
+                <button id="shareBtn" class="btn btn-primary">Share Screen</button>
+                <button id="stopShareBtn" class="btn btn-danger" hidden>Stop Sharing</button>
+            </div>
+            <div id="statusTextCast" class="status-text"></div>
+        </div>
+    </main>
+
+    <script src="scripts/screen.js"></script>
+</body>
+
+</html>
