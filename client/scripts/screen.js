@@ -10,42 +10,6 @@ var MEDIA_CONSTRAINTS = {
 
 var ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 
-function optimizeSdpForH264(sdp) {
-    var lines = sdp.split('\r\n');
-    var videoMlineIndex = -1;
-    var h264Payloads = [];
-    var payloadOrder = [];
-
-    for (var i = 0; i < lines.length; i++) {
-        if (lines[i].startsWith('m=video')) {
-            videoMlineIndex = i;
-            payloadOrder = lines[i].split(' ').slice(3);
-            break;
-        }
-    }
-
-    if (videoMlineIndex === -1) return sdp;
-
-    for (var i = 0; i < lines.length; i++) {
-        var match = lines[i].match(/^a=rtpmap:(\d+)\s+H264\//);
-        if (match) {
-            h264Payloads.push(match[1]);
-        }
-    }
-
-    if (h264Payloads.length === 0) return sdp;
-
-    var others = payloadOrder.filter(function(p) { return h264Payloads.indexOf(p) === -1; });
-    var newOrder = h264Payloads.concat(others);
-
-    lines[videoMlineIndex] = 'm=video ' + newOrder.join(' ') + ' ' + lines[videoMlineIndex].split(' ').slice(-1)[0];
-
-    lines.splice(videoMlineIndex + 1, 0, 'b=AS:8000');
-
-    return lines.join('\r\n');
-}
-
-
 function createPeerConnection() {
     return new RTCPeerConnection({ iceServers: ICE_SERVERS });
 }
@@ -174,9 +138,12 @@ class ScreenDisplay {
         pc.addTransceiver('video', { direction: 'recvonly' });
 
         pc.ontrack = function(event) {
+            console.log('Display: ontrack received, streams:', event.streams.length);
             var video = document.getElementById('remoteVideo');
             video.srcObject = event.streams[0];
             video.style.display = 'block';
+            video.play().catch(function(e) { console.warn('Video play failed:', e); });
+            document.body.classList.add('casting');
             document.getElementById('screenCodeContainer').style.display = 'none';
             document.getElementById('statusText').textContent = 'Screen is being cast...';
         };
@@ -188,6 +155,7 @@ class ScreenDisplay {
         };
 
         pc.oniceconnectionstatechange = function() {
+            console.log('Display ICE state:', pc.iceConnectionState);
             if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
                 self._cleanupCaster(msg.casterId);
             }
@@ -196,11 +164,7 @@ class ScreenDisplay {
         pc.createOffer()
             .then(function(offer) { return pc.setLocalDescription(offer); })
             .then(function() {
-                var sdp = optimizeSdpForH264(pc.localDescription.sdp);
-                pc.setLocalDescription(new RTCSessionDescription({ type: 'offer', sdp: sdp }))
-                    .then(function() {
-                        self._conn.send({ type: 'signal', to: msg.casterId, sdp: pc.localDescription });
-                    });
+                self._conn.send({ type: 'signal', to: msg.casterId, sdp: pc.localDescription });
             })
             .catch(function(e) { console.error('Display offer error:', e); });
 
@@ -233,6 +197,7 @@ class ScreenDisplay {
             var video = document.getElementById('remoteVideo');
             video.srcObject = null;
             video.style.display = 'none';
+            document.body.classList.remove('casting');
             document.getElementById('screenCodeContainer').style.display = '';
             document.getElementById('statusText').textContent = 'Caster disconnected. Waiting for a new connection...';
         }
@@ -313,6 +278,7 @@ class ScreenCast {
         };
 
         this._pc.oniceconnectionstatechange = function() {
+            console.log('Cast ICE state:', self._pc ? self._pc.iceConnectionState : 'null');
             if (self._pc && (self._pc.iceConnectionState === 'disconnected' || self._pc.iceConnectionState === 'failed')) {
                 self._stop();
             }
@@ -327,10 +293,7 @@ class ScreenCast {
             await this._pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
             var answer = await this._pc.createAnswer();
             await this._pc.setLocalDescription(answer);
-
-            var optimizedSdp = optimizeSdpForH264(this._pc.localDescription.sdp);
-            await this._pc.setLocalDescription(new RTCSessionDescription({ type: 'answer', sdp: optimizedSdp }));
-
+            console.log('Cast: SDP exchange complete');
             this._conn.send({ type: 'signal', to: this._screenId, sdp: this._pc.localDescription });
         } catch (e) {
             console.error('Cast answer error:', e);

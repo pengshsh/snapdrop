@@ -115,6 +115,37 @@ main {
     background: #000;
     margin-bottom: 16px;
     aspect-ratio: 16 / 9;
+    display: none;
+}
+
+body.casting .video-container {
+    display: block;
+}
+
+body.casting header {
+    display: none;
+}
+
+body.casting main {
+    padding: 0;
+}
+
+body.casting .video-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    margin: 0;
+    aspect-ratio: auto;
+    z-index: 10;
+}
+
+body.casting #screenCodeContainer,
+body.casting .mode-title,
+body.casting .status-text {
+    display: none;
 }
 
 #remoteVideo {
